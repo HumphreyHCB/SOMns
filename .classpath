@@ -3,7 +3,7 @@
 	<classpathentry combineaccessrules="false" kind="src" path="/com.oracle.truffle.api.jdk8"/>
 	<classpathentry kind="src" path="src"/>
 	<classpathentry kind="src" path="tests/java"/>
-	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry exported="true" kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
 	<classpathentry kind="src" path="src_gen">
 		<attributes>
 			<attribute name="ignore_optional_problems" value="true"/>

@@ -180,9 +180,11 @@ public class Parser {
     private final String           fileName;
     private final Symbol           expected;
     private final Symbol           found;
+    public SourceCoordinate        errorTokenSourceCoordinate;
 
     ParseError(final String message, final Symbol expected, final Parser parser) {
       super(message);
+      errorTokenSourceCoordinate = parser.lexer.getStartCoordinate();
       if (parser.lexer == null) {
         this.sourceCoordinate = SourceCoordinate.createEmpty();
         this.rawBuffer = "";
@@ -202,6 +204,10 @@ public class Parser {
 
     public SourceCoordinate getSourceCoordinate() {
       return sourceCoordinate;
+    }
+
+    public SourceCoordinate getErrorToken() {
+      return errorTokenSourceCoordinate;
     }
 
     @Override
@@ -303,6 +309,11 @@ public class Parser {
     return lexer.getStartCoordinate();
   }
 
+  public int getCoordinateWithoutWhiteSpace() {
+    return lexer.getNumberOfNonWhiteCharsRead();
+
+  }
+
   private void compatibilityNewspeakVersionAndFileCategory() throws ParseError {
     if (sym == Identifier && "Newspeak3".equals(text)) {
       expect(Identifier, KeywordTag.class);
@@ -323,15 +334,20 @@ public class Parser {
     return mixinName;
   }
 
-  private MixinBuilder classDeclaration(final MixinBuilder outerBuilder,
+  protected MixinBuilder classDeclaration(final MixinBuilder outerBuilder,
       final AccessModifier accessModifier) throws ProgramDefinitionError {
+    SourceCoordinate coord = getCoordinate();
     expectIdentifier("class", "Found unexpected token %(found)s. " +
         "Tried parsing a class declaration and expected 'class' instead.",
         KeywordTag.class);
 
-    SourceCoordinate coord = getCoordinate();
+    storePosition(coord, "class", SemanticTokenType.KEYWORD.value);
+    coord = getCoordinate();
     String mixinName = className();
+
+    storePosition(coord, mixinName, SemanticTokenType.CLASS.value);
     SourceSection nameSS = getSource(coord);
+    // storeClassNamePosition(coord, mixinName, nameSS, accessModifier);
 
     MixinBuilder mxnBuilder = new MixinBuilder(outerBuilder, accessModifier,
         symbolFor(mixinName), nameSS, structuralProbe, language);
@@ -359,6 +375,7 @@ public class Parser {
         KeywordTag.class);
 
     inheritanceListAndOrBody(mxnBuilder);
+
     return mxnBuilder;
   }
 
@@ -499,7 +516,11 @@ public class Parser {
     } else if (acceptIdentifier("self", KeywordTag.class)) {
       self = meth.getSelfRead(getSource(coord));
     } else {
-      return implicitUnaryMessage(meth, unarySelector(), getSource(coord));
+      SourceCoordinate coord2 = getCoordinate();
+      SSymbol unarySelector = unarySelector();
+      // storeUnaryMessagesPositions(coord2, unarySelector.getString());
+      storePosition(coord, unarySelector.getString(), SemanticTokenType.METHOD.value);
+      return implicitUnaryMessage(meth, unarySelector, getSource(coord));
     }
     return unaryMessage(self, false, null);
   }
@@ -530,7 +551,7 @@ public class Parser {
     expect(EndTerm, null);
   }
 
-  private void classHeader(final MixinBuilder mxnBuilder)
+  protected void classHeader(final MixinBuilder mxnBuilder)
       throws ProgramDefinitionError {
     expect(NewTerm, null);
     classComment(mxnBuilder);
@@ -582,7 +603,7 @@ public class Parser {
 
   private String comment() throws ParseError {
     SourceCoordinate coord = getCoordinate();
-
+    SourceSection source = getSource(coord);
     expect(BeginComment, null);
 
     String comment = "";
@@ -598,6 +619,8 @@ public class Parser {
       }
     }
     expect(EndComment, null);
+
+    storeCommentPosition(coord, getCoordinate(), comment);
     language.getVM().reportSyntaxElement(CommentTag.class, getSource(coord));
     return comment;
   }
@@ -607,9 +630,11 @@ public class Parser {
     // Newspeak-speak: we do not support simSlotDecls, i.e.,
     // simultaneous slots clauses (spec 6.3.2)
     expect(Or, DelimiterOpeningTag.class);
-
+    SourceCoordinate coord = getCoordinate();
+    SourceSection source = getSource(coord);
     while (sym != Or) {
       slotDefinition(mxnBuilder);
+
     }
 
     comments();
@@ -625,7 +650,8 @@ public class Parser {
         + lexer.getCurrentLineNumber() + ":" + lexer.getCurrentColumn());
     assert "||".equals(text);
     expect(OperatorSequence, DelimiterOpeningTag.class);
-
+    SourceCoordinate coord = getCoordinate();
+    SourceSection source = getSource(coord);
     while (sym != OperatorSequence) {
       slotDefinition(mxnBuilder);
     }
@@ -643,12 +669,13 @@ public class Parser {
       return;
     }
 
-    SourceCoordinate coord = getCoordinate();
     AccessModifier acccessModifier = accessModifier();
 
     comments();
-
+    SourceCoordinate coord = getCoordinate();
     String slotName = slotDecl();
+    storePosition(coord, slotName, SemanticTokenType.VARIABLE.value);
+    // storeLocalVariableDec(coord, acccessModifier.toString(), slotName);
     boolean immutable;
     ExpressionNode init;
 
@@ -669,14 +696,18 @@ public class Parser {
   }
 
   private AccessModifier accessModifier() {
+    SourceCoordinate coord = getCoordinate();
     if (sym == Identifier) {
       if (acceptIdentifier("private", KeywordTag.class)) {
+        storePosition(coord, "private", SemanticTokenType.KEYWORD.value);
         return AccessModifier.PRIVATE;
       }
       if (acceptIdentifier("protected", KeywordTag.class)) {
+        storePosition(coord, "protected", SemanticTokenType.KEYWORD.value);
         return AccessModifier.PROTECTED;
       }
       if (acceptIdentifier("public", KeywordTag.class)) {
+        storePosition(coord, "public", SemanticTokenType.KEYWORD.value);
         return AccessModifier.PUBLIC;
       }
     }
@@ -685,6 +716,7 @@ public class Parser {
 
   private String slotDecl() throws ParseError {
     String id = identifier();
+    SourceCoordinate coord = getCoordinate();
 
     comments();
 
@@ -698,10 +730,11 @@ public class Parser {
   private void initExprs(final MixinBuilder mxnBuilder) throws ProgramDefinitionError {
     MethodBuilder initializer = mxnBuilder.getInitializerMethodBuilder();
     mxnBuilder.addInitializerExpression(expression(initializer));
-
+    // ExpressionNode exp = expression(initializer);
     while (accept(Period, StatementSeparatorTag.class)) {
       if (sym != EndTerm) {
         mxnBuilder.addInitializerExpression(expression(initializer));
+        // ExpressionNode exp = expression(initializer);
       }
     }
   }
@@ -799,8 +832,9 @@ public class Parser {
     if (accept(s, tag)) {
       return;
     }
+    ParseError parseError = new ParseError(msg, s, this);
 
-    throw new ParseError(msg, s, this);
+    throw parseError;
   }
 
   protected void expect(final Symbol s, final Class<? extends Tag> tag) throws ParseError {
@@ -829,15 +863,15 @@ public class Parser {
     return ss;
   }
 
-  private void methodDeclaration(final AccessModifier accessModifier,
+  protected void methodDeclaration(final AccessModifier accessModifier,
       final SourceCoordinate coord, final MixinBuilder mxnBuilder)
       throws ProgramDefinitionError {
     MethodBuilder builder = new MethodBuilder(mxnBuilder, structuralProbe);
-
+    SourceCoordinate coords = getCoordinate();
     comments();
 
     messagePattern(builder);
-
+    storePosition(coords, builder.getSignature().getString(), SemanticTokenType.METHOD.value);
     comments();
 
     expect(Equal,
@@ -847,12 +881,16 @@ public class Parser {
     comments();
 
     ExpressionNode body = methodBlock(builder);
+
     builder.finalizeMethodScope();
+
     SInvokable meth = builder.assemble(body, accessModifier, getSource(coord));
 
+    // storeMethodNamePosition(coord, meth);
     if (structuralProbe != null) {
       structuralProbe.recordNewMethod(meth.getIdentifier(), meth);
     }
+
     mxnBuilder.addMethod(meth);
   }
 
@@ -895,10 +933,24 @@ public class Parser {
     do {
       SourceCoordinate coord = getCoordinate();
       kw.append(keyword());
+      // storeUsingPosition(coord, kw.toString());
+      storePosition(coord, kw.toString(), SemanticTokenType.KEYWORD.value);
       builder.addMethodDefinitionSource(getSource(coord));
 
       coord = getCoordinate();
-      builder.addArgument(symbolFor(argument()), getSource(coord));
+      SSymbol s = symbolFor(argument());
+
+      /*
+       * if (coord.startLine == 1) {
+       * storeIdentifierPosition(getCoordinate().create(coord.startLine,
+       * coord.startColumn + 1, coord.charIndex), s.getString());
+       * } else {
+       */
+      // storeIdentifierPosition(coord, s.getString());
+      storePosition(coord, s.getString(), SemanticTokenType.TYPE.value);
+      // }
+      builder.addArgument(s, getSource(coord));
+
     } while (sym == Keyword);
 
     builder.setSignature(symbolFor(kw.toString()));
@@ -922,6 +974,7 @@ public class Parser {
   protected SSymbol binarySelector() throws ParseError {
     String s = text;
 
+    storeSymbolPosition(getCoordinate(), s);
     // Checkstyle: stop   @formatter:off
     if (accept(Or, null)) {
     } else if (accept(Comma, null)) {
@@ -978,7 +1031,9 @@ public class Parser {
     List<ExpressionNode> expressions = new ArrayList<ExpressionNode>();
 
     if (accept(Or, DelimiterOpeningTag.class)) {
+      SourceCoordinate coord = getCoordinate();
       locals(builder, expressions);
+      coord = getCoordinate();
       expect(Or, DelimiterClosingTag.class);
     } else if (sym == OperatorSequence && "||".equals(text)) {
       expect(OperatorSequence, null);
@@ -993,9 +1048,16 @@ public class Parser {
 
     // Newspeak-speak: we do not support simSlotDecls, i.e.,
     // simultaneous slots clauses (spec 6.3.2)
+    SourceCoordinate coord = getCoordinate();
+    SourceSection soruce = getSource(coord);
     while (sym != Or) {
+      coord = getCoordinate();
+      soruce = getSource(coord);
       localDefinition(builder, expressions);
+
     }
+
+    // storeLocalVariableDec(getCoordinate(), getCoordinate().startColumn - coord.startColumn);
 
     parsingSlotDefs -= 1;
   }
@@ -1010,7 +1072,8 @@ public class Parser {
     SourceCoordinate coord = getCoordinate();
     String slotName = slotDecl();
     SourceSection source = getSource(coord);
-
+    // storeLocalPosition(coord, slotName);
+    storePosition(coord, slotName, SemanticTokenType.VARIABLE.value);
     language.getVM().reportSyntaxElement(LocalVariableTag.class, source);
 
     boolean immutable;
@@ -1092,7 +1155,7 @@ public class Parser {
       throws ProgramDefinitionError {
     comments();
     peekForNextSymbolFromLexer();
-
+    SourceCoordinate coord = getCoordinate();
     if (sym == Symbol.SetterKeyword) {
       return setterSends(builder);
     } else {
@@ -1133,6 +1196,7 @@ public class Parser {
       exp = primary(builder);
     }
 
+    // storeIdentifierPosition(getCoordinate(), exp.ge);
     if (symIsMessageSend()) {
       SourceCoordinate coord = getCoordinate();
       ExpressionNode[] lastReceiver = new ExpressionNode[] {exp};
@@ -1203,16 +1267,23 @@ public class Parser {
         // Parse true, false, and nil as keyword-like constructs
         // (cf. Newspeak spec on reserved words)
         if (acceptIdentifier("true", LiteralTag.class)) {
+          // storeBooleanPositions(coord, "true");
+          storePosition(coord, "true", SemanticTokenType.KEYWORD.value);
+
           comments();
           return new TrueLiteralNode().initialize(getSource(coord));
         }
 
         if (acceptIdentifier("false", LiteralTag.class)) {
+          // storeBooleanPositions(coord, "false");
+          storePosition(coord, "false", SemanticTokenType.KEYWORD.value);
           comments();
           return new FalseLiteralNode().initialize(getSource(coord));
         }
 
         if (acceptIdentifier("nil", LiteralTag.class)) {
+          // storeBooleanPositions(coord, "nil");
+          storePosition(coord, "nil", SemanticTokenType.KEYWORD.value);
           comments();
           return new NilLiteralNode().initialize(getSource(coord));
         }
@@ -1222,8 +1293,10 @@ public class Parser {
         if ("outer".equals(text)) {
           return outerSend(builder);
         }
-
+        SourceCoordinate coord2 = getCoordinate();
         SSymbol selector = unarySelector();
+        storePosition(coord2, selector.getString(), SemanticTokenType.METHOD.value);
+        // storeimplicitUnaryMessagePositions(coord2, selector.getString());
 
         comments();
 
@@ -1337,6 +1410,8 @@ public class Parser {
 
   protected ExpressionNode implicitUnaryMessage(final MethodBuilder meth,
       final SSymbol selector, final SourceSection section) {
+    SourceCoordinate coord = getCoordinate();
+
     return meth.getImplicitReceiverSend(selector, section);
   }
 
@@ -1344,7 +1419,8 @@ public class Parser {
       final boolean eventualSend, final SourceSection sendOperator) throws ParseError {
     SourceCoordinate coord = getCoordinate();
     SSymbol selector = unarySelector();
-
+    storePosition(coord, selector.getString(), SemanticTokenType.METHOD.value);
+    // storeUnaryMessagesPositions(coord, selector.getString());
     comments();
     return createMessageSend(selector, new ExpressionNode[] {receiver},
         eventualSend, getSource(coord), sendOperator, language);
@@ -1365,7 +1441,7 @@ public class Parser {
       final SourceSection sendOperator) throws ProgramDefinitionError {
     SourceCoordinate coord = getCoordinate();
     SSymbol msg = binarySelector();
-
+    // grab the sym here
     comments();
 
     ExpressionNode operand = binaryOperand(builder);
@@ -1429,10 +1505,16 @@ public class Parser {
     arguments.add(receiver);
 
     do {
-      kw.append(keyword());
+      coord = getCoordinate();
+      String keyword = keyword();
+      storePosition(coord, keyword, SemanticTokenType.KEYWORD.value);
+      // storeReferencePositions(coord, keyword);
+      kw.append(keyword);
+
       comments();
 
       arguments.add(formula(builder));
+
       comments();
     } while (sym == Keyword);
 
@@ -1473,6 +1555,7 @@ public class Parser {
       throws ProgramDefinitionError {
     ExpressionNode operand = binaryOperand(builder);
     SourceCoordinate coord = getCoordinate();
+    SourceSection source = getSource(coord);
     boolean evenutalSend = accept(EventualSend, KeywordTag.class);
     SourceSection sendOp = null;
     if (evenutalSend) {
@@ -1486,7 +1569,10 @@ public class Parser {
   private ExpressionNode nestedTerm(final MethodBuilder builder)
       throws ProgramDefinitionError {
     expect(NewTerm, DelimiterOpeningTag.class);
+    SourceCoordinate coord = getCoordinate();
+    SourceSection source = getSource(coord);
     ExpressionNode exp = expression(builder);
+    coord = getCoordinate();
     expect(EndTerm, DelimiterClosingTag.class);
 
     comments();
@@ -1565,7 +1651,8 @@ public class Parser {
   private LiteralNode literalString() throws ParseError {
     SourceCoordinate coord = getCoordinate();
     String s = string();
-
+    // storeLiteralStringPosition(coord, s);
+    storePosition(coord, s + "  ", SemanticTokenType.STRING.value);
     return new StringLiteralNode(s).initialize(getSource(coord));
   }
 
@@ -1636,8 +1723,10 @@ public class Parser {
       throws ProgramDefinitionError {
     // Generate the class's signature
     SourceSection source = getSource(getCoordinate());
+
     SSymbol signature =
         symbolFor("objL@" + lexer.getCurrentLineNumber() + "@" + lexer.getCurrentColumn());
+
     MixinBuilder classBuilder = new MixinBuilder(builder,
         AccessModifier.PUBLIC, signature, source, structuralProbe, language);
 
@@ -1718,7 +1807,10 @@ public class Parser {
     do {
       expect(Colon, KeywordTag.class);
       SourceCoordinate coord = getCoordinate();
-      builder.addArgument(symbolFor(argument()), getSource(coord));
+      SSymbol symbol = symbolFor(argument());
+      storePosition(coord, symbol.getString(), SemanticTokenType.PARAMETER.value);
+      // storeBlockPatternPositions(coord, symbol.getString());
+      builder.addArgument(symbol, getSource(coord));
     } while (sym == Colon);
   }
 
@@ -1736,4 +1828,106 @@ public class Parser {
   private static boolean printableSymbol(final Symbol sym) {
     return sym == Numeral || sym.compareTo(STString) >= 0;
   }
+
+  // protected void storeClassNamePosition(final SourceCoordinate coord, final String name,
+  // final SourceSection source, final AccessModifier accessModifier) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+  //
+  // protected void storeMethodNamePosition(final SourceCoordinate coord,
+  // final SInvokable method) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  // protected void storeLiteralStringPosition(final SourceCoordinate coord,
+  // final String litString) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  // protected void storeLocalVariableDec(final SourceCoordinate coord,
+  // final String accessToken, final String name) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  protected void storeCommentPosition(final SourceCoordinate startCoords,
+      final SourceCoordinate endCoords,
+      final String commentLength) {
+    // this method is meant to be overide so it dose nothing in the parser
+  }
+
+  // protected void storeLocalPosition(final SourceCoordinate coords,
+  // final String localLength) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  // protected void storeIdentifierPosition(final SourceCoordinate coords,
+  // final String identifierLength) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  protected void storeEvaluationPosition(final SourceCoordinate coords,
+      final String identifierLength) {
+    // this method is meant to be overide so it dose nothing in the parser
+  }
+
+  // protected void storeimplicitUnaryMessagePositions(final SourceCoordinate coords,
+  // final String identifierLength) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  // protected void storeUnaryMessagesPositions(final SourceCoordinate coords,
+  // final String identifierLength) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  // protected void storeReferencePositions(final SourceCoordinate coords,
+  // final String identifierLength) {
+  // // this method is meant to be overide so it dose nothing in the parser
+  // }
+
+  // protected void storeUsingPosition(final SourceCoordinate coords,
+  // final String identifierLength) {
+  //
+  // }
+
+  protected void storeSymbolPosition(final SourceCoordinate coords,
+      final String identifierLength) {
+
+  }
+
+  // protected void storeBlockPatternPositions(final SourceCoordinate coords,
+  // final String identifier) {
+  //
+  // }
+
+  // protected void storeBooleanPositions(final SourceCoordinate coords,
+  // final String identifier) {
+  // }
+
+  protected void storePosition(final SourceCoordinate coords, final String length,
+      final int tokenTypevalue) {
+    // method stub
+  }
+
+  public enum SemanticTokenType {
+    CLASS(0),
+    KEYWORD(1),
+    METHOD(2),
+    STRING(3),
+    VARIABLE(4),
+    COMMENT(5),
+    TYPE(6),
+    PROPERTY(7),
+    OPERATIOR(8),
+    PARAMETER(9),
+    FUNCTION(10),
+    NUMBER(11);
+
+    public final int value;
+
+    private SemanticTokenType(final int value) {
+      this.value = value;
+    }
+  }
+
 }
